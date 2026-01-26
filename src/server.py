@@ -148,10 +148,13 @@ def execute_runbook():
     env = os.environ.copy()
     # Inject all payload keys as environment variables
     # (e.g., project_id -> PROJECT_ID)
+    injected_keys = []
     for key, value in payload.items():
-        if isinstance(value, str):
-            env[key.upper()] = value
-            # Also keep original case just in case? Standard bash convention is CAPS.
+        env_key = key.upper()
+        env[env_key] = str(value)
+        injected_keys.append(env_key)
+
+    logger.info(f"Injected environment variables: {injected_keys}")
 
     try:
         result = subprocess.run(
