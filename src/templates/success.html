@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Task Submitted</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; padding: 20px; text-align: center; }
+        .container { max-width: 600px; margin: 50px auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #34A853; }
+        .task-id { background: #eee; padding: 10px; border-radius: 4px; font-family: monospace; margin: 20px 0; word-break: break-all;}
+        a { color: #4285F4; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Runbook Queued Successfully!</h1>
+        <p>Your request has been sent to Cloud Tasks for execution.</p>
+        <div class="task-id">{{ task_name }}</div>
+        <p>Execution will begin shortly. Check Cloud Logging for details.</p>
+        <br>
+        <a href="/">Return to Portal</a>
+    </div>
+</body>
+</html>
