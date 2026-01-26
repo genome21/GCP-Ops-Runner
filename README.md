@@ -2,6 +2,8 @@
 
 A serverless execution framework for Google Cloud operational runbooks. Uses Bash + `gcloud` via Cloud Run and Cloud Tasks to provide a safe, auditable, and repeatable remediation interface for Ops teams.
 
+![Ops Portal UI](docs/images/portal.png)
+
 ## Architecture
 
 1.  **Trigger:** Cloud Tasks (asynchronous queue).
@@ -38,7 +40,7 @@ A serverless execution framework for Google Cloud operational runbooks. Uses Bas
     This script will:
     *   Enable required APIs (Cloud Run, Cloud Tasks, IAM, etc.).
     *   Create a Service Account (`ops-runner-sa`).
-    *   Grant **Project IAM Admin** and **Cloud Run Invoker** roles.
+    *   Grant **Project IAM Admin**, **Cloud Run Invoker**, and **Cloud Tasks Enqueuer** roles.
     *   Create a Cloud Tasks queue (`ops-queue`).
     *   Deploy the Cloud Run service (`ops-runner`).
 
@@ -46,7 +48,14 @@ A serverless execution framework for Google Cloud operational runbooks. Uses Bas
 
 ## Usage
 
-### Triggering a Runbook
+### 1. Web Portal (Recommended)
+
+Navigate to the Cloud Run Service URL in your browser.
+1.  Select a runbook from the list.
+2.  Fill in the required parameters (parsed from the runbook header).
+3.  Click **Execute Runbook** to queue the task.
+
+### 2. CLI Trigger
 
 Use the `trigger_fix.sh` script to enqueue a task. This allows Ops users to trigger fixes without needing direct IAM permissions on the target project.
 
@@ -73,8 +82,13 @@ To create a cheap f1-micro VM for testing (requires Compute Engine API enabled o
 ### Adding New Runbooks
 
 1.  Create a new `.sh` script in the `runbooks/` directory.
-2.  Ensure the script uses `PROJECT_ID` (passed as an environment variable) to target the correct project.
-3.  Re-deploy the Cloud Run service (or use a build pipeline) to include the new script.
+2.  Add metadata headers for the UI:
+    ```bash
+    # DESC: Description of what the script does.
+    # REQ: variable_name (Label for UI)
+    ```
+3.  Ensure the script uses the variable names (passed as environment variables) to target the correct resources.
+4.  Re-deploy the Cloud Run service (or use a build pipeline) to include the new script.
 
     ```bash
     gcloud run deploy ops-runner --source . --platform managed --region ${REGION:-us-central1} --quiet
