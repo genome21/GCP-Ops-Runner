@@ -7,7 +7,7 @@ WORKDIR /app
 COPY . /app
 
 # Install Python dependencies
-RUN pip3 install --no-cache-dir flask gunicorn google-cloud-tasks
+RUN pip3 install --no-cache-dir --break-system-packages -r src/requirements.txt
 
 RUN chmod +x src/runner.sh runbooks/*.sh
 
