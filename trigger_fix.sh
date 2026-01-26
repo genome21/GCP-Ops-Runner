@@ -11,7 +11,7 @@ if [ -z "$ACTION" ] || [ -z "$TARGET_PROJECT_ID" ]; then
 fi
 
 PROJECT_ID=$(gcloud config get-value project)
-REGION="us-central1"
+REGION="${REGION:-us-central1}"
 QUEUE_NAME="ops-queue"
 SERVICE_NAME="ops-runner"
 SA_NAME="ops-runner-sa"

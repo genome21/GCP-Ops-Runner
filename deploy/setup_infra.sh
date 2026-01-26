@@ -2,7 +2,7 @@
 set -e
 
 PROJECT_ID=$(gcloud config get-value project)
-REGION="us-central1"
+REGION="${REGION:-us-central1}"
 SERVICE_NAME="ops-runner"
 SA_NAME="ops-runner-sa"
 QUEUE_NAME="ops-queue"
