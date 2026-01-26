@@ -2,7 +2,16 @@ import os
 import json
 import subprocess
 import sys
+import logging
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Configure logging to output JSON for Google Cloud Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
+logger = logging.getLogger(__name__)
 
 class RunnerHandler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -15,6 +24,7 @@ class RunnerHandler(BaseHTTPRequestHandler):
             self.send_response(400)
             self.end_headers()
             self.wfile.write(b"Invalid JSON")
+            logger.error("Received invalid JSON payload")
             return
 
         action = payload.get('action')
@@ -24,6 +34,7 @@ class RunnerHandler(BaseHTTPRequestHandler):
             self.send_response(400)
             self.end_headers()
             self.wfile.write(b"Missing 'action' or 'project_id'")
+            logger.error("Missing 'action' or 'project_id' in payload")
             return
 
         # Sanitize action to prevent directory traversal
@@ -31,6 +42,7 @@ class RunnerHandler(BaseHTTPRequestHandler):
              self.send_response(400)
              self.end_headers()
              self.wfile.write(b"Invalid action name")
+             logger.warning(f"Invalid action name attempt: {action}")
              return
 
         # Assuming the script runs from /app, runbooks are in /app/runbooks
@@ -41,10 +53,10 @@ class RunnerHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             self.wfile.write(f"Runbook '{action}' not found".encode())
-            print(f"Runbook {script_path} not found")
+            logger.error(f"Runbook not found: {script_path}")
             return
 
-        print(f"Executing {action} for project {project_id}")
+        logger.info(f"Executing {action} for project {project_id}")
 
         env = os.environ.copy()
         env['PROJECT_ID'] = project_id
@@ -58,23 +70,28 @@ class RunnerHandler(BaseHTTPRequestHandler):
                 check=False
             )
 
-            print(f"--- Output for {action} ---")
-            print(result.stdout)
+            logger.info(f"--- Output for {action} ---")
+            for line in result.stdout.splitlines():
+                logger.info(line)
+
             if result.stderr:
-                print(f"--- Error for {action} ---", file=sys.stderr)
-                print(result.stderr, file=sys.stderr)
+                logger.error(f"--- Error for {action} ---")
+                for line in result.stderr.splitlines():
+                    logger.error(line)
 
             if result.returncode == 0:
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"Success")
+                logger.info(f"Runbook {action} completed successfully.")
             else:
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(f"Script failed with exit code {result.returncode}".encode())
+                logger.error(f"Runbook {action} failed with exit code {result.returncode}")
 
         except Exception as e:
-            print(f"Execution error: {e}", file=sys.stderr)
+            logger.exception(f"Execution error: {e}")
             self.send_response(500)
             self.end_headers()
             self.wfile.write(str(e).encode())
@@ -89,7 +106,7 @@ def run(server_class=HTTPServer, handler_class=RunnerHandler):
     port = int(os.environ.get('PORT', 8080))
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
-    print(f"Starting server on port {port}...")
+    logger.info(f"Starting server on port {port}...")
     httpd.serve_forever()
 
 if __name__ == '__main__':

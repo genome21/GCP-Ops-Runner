@@ -9,5 +9,6 @@ COPY . /app
 RUN chmod +x src/runner.sh runbooks/*.sh
 
 ENV PORT=8080
+ENV PYTHONUNBUFFERED=1
 
 CMD ["/app/src/runner.sh"]
