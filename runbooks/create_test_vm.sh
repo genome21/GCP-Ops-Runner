@@ -23,6 +23,7 @@ else
         --machine-type=f1-micro \
         --image-family=debian-11 \
         --image-project=debian-cloud \
+        --network-interface=subnet=default,no-address \
         --quiet
     echo "VM '$VM_NAME' created successfully."
 fi
