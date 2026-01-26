@@ -1,4 +1,7 @@
 #!/bin/bash
+# DESC: Creates a cheap f1-micro VM in the default network for connectivity testing.
+# REQ: project_id (Target Project ID)
+# REQ: zone (Zone [default: us-central1-a])
 set -e
 
 if [ -z "$PROJECT_ID" ]; then
@@ -23,6 +26,7 @@ else
         --machine-type=f1-micro \
         --image-family=debian-11 \
         --image-project=debian-cloud \
+        --network-interface=subnet=default,no-address \
         --quiet
     echo "VM '$VM_NAME' created successfully."
 fi

@@ -1,4 +1,6 @@
 #!/bin/bash
+# DESC: Restores the roles/editor role to the default Compute Engine Service Account.
+# REQ: project_id (Target Project ID)
 set -e
 
 if [ -z "$PROJECT_ID" ]; then

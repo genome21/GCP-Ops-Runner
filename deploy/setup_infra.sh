@@ -32,6 +32,11 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$SA_EMAIL" \
     --role="roles/run.invoker"
 
+echo "Granting Cloud Tasks Enqueuer..."
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/cloudtasks.enqueuer"
+
 # Create Cloud Tasks Queue
 echo "Creating Cloud Tasks Queue..."
 if ! gcloud tasks queues describe "$QUEUE_NAME" --location="$REGION" > /dev/null 2>&1; then
@@ -47,6 +52,18 @@ gcloud run deploy "$SERVICE_NAME" \
     --service-account "$SA_EMAIL" \
     --no-allow-unauthenticated \
     --timeout=3600 \
+    --set-env-vars="PROJECT_ID=$PROJECT_ID,REGION=$REGION,QUEUE_NAME=$QUEUE_NAME,SERVICE_ACCOUNT_EMAIL=$SA_EMAIL" \
+    --quiet
+
+# Fetch Service URL and update it as an env var (circular dependency workaround)
+# The Service needs its own URL to know where to target the Task.
+SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')
+echo "Service URL: $SERVICE_URL"
+
+echo "Updating Service with SERVICE_URL..."
+gcloud run services update "$SERVICE_NAME" \
+    --region "$REGION" \
+    --set-env-vars="SERVICE_URL=$SERVICE_URL" \
     --quiet
 
 echo "Setup complete."

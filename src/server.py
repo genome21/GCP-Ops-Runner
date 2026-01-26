@@ -3,111 +3,184 @@ import json
 import subprocess
 import sys
 import logging
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import re
+from flask import Flask, request, render_template, jsonify
+from google.cloud import tasks_v2
 
-# Configure logging to output JSON for Google Cloud Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    stream=sys.stdout
-)
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
-class RunnerHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length)
+app = Flask(__name__)
 
-        try:
-            payload = json.loads(post_data)
-        except json.JSONDecodeError:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"Invalid JSON")
-            logger.error("Received invalid JSON payload")
-            return
+# Configuration
+PROJECT_ID = os.environ.get("PROJECT_ID", "unknown-project")
+REGION = os.environ.get("REGION", "us-central1")
+QUEUE_NAME = os.environ.get("QUEUE_NAME", "ops-queue")
+# SERVICE_URL will be populated at runtime or config
+SERVICE_URL = os.environ.get("SERVICE_URL")
+# The service account to use for the OIDC token when the task invokes the worker
+SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
 
-        action = payload.get('action')
-        project_id = payload.get('project_id')
+def get_runbooks():
+    """Scans the runbooks directory and extracts metadata."""
+    runbooks = []
+    runbooks_dir = os.path.join(os.getcwd(), 'runbooks')
 
-        if not action or not project_id:
-            self.send_response(400)
-            self.end_headers()
-            self.wfile.write(b"Missing 'action' or 'project_id'")
-            logger.error("Missing 'action' or 'project_id' in payload")
-            return
+    if not os.path.exists(runbooks_dir):
+        return runbooks
 
-        # Sanitize action to prevent directory traversal
-        if '..' in action or '/' in action:
-             self.send_response(400)
-             self.end_headers()
-             self.wfile.write(b"Invalid action name")
-             logger.warning(f"Invalid action name attempt: {action}")
-             return
+    for filename in os.listdir(runbooks_dir):
+        if filename.endswith(".sh"):
+            filepath = os.path.join(runbooks_dir, filename)
+            action = filename[:-3] # remove .sh
+            description = "No description provided."
+            params = []
 
-        # Assuming the script runs from /app, runbooks are in /app/runbooks
-        # Or relative to current working directory
-        script_path = os.path.join(os.getcwd(), 'runbooks', f"{action}.sh")
+            try:
+                with open(filepath, 'r') as f:
+                    for line in f:
+                        if line.startswith("# DESC:"):
+                            description = line[7:].strip()
+                        elif line.startswith("# REQ:"):
+                            # Format: # REQ: param_name (Label Text)
+                            match = re.search(r'# REQ:\s*(\w+)\s*(?:\((.*)\))?', line)
+                            if match:
+                                param_name = match.group(1)
+                                label = match.group(2) if match.group(2) else param_name
+                                params.append({"name": param_name, "label": label})
+            except Exception as e:
+                logger.error(f"Error reading {filename}: {e}")
+                continue
 
-        if not os.path.exists(script_path):
-            self.send_response(404)
-            self.end_headers()
-            self.wfile.write(f"Runbook '{action}' not found".encode())
-            logger.error(f"Runbook not found: {script_path}")
-            return
+            runbooks.append({
+                "action": action,
+                "description": description,
+                "params": params
+            })
+    return runbooks
 
-        logger.info(f"Executing {action} for project {project_id}")
+@app.route('/', methods=['GET'])
+def index():
+    """Renders the Portal UI."""
+    runbooks = get_runbooks()
+    return render_template('index.html', runbooks=runbooks, project_id=PROJECT_ID)
 
-        env = os.environ.copy()
-        env['PROJECT_ID'] = project_id
+@app.route('/enqueue', methods=['POST'])
+def enqueue_task():
+    """Enqueues a task to Cloud Tasks."""
+    data = request.form.to_dict()
+    action = data.get('action')
 
-        try:
-            result = subprocess.run(
-                [script_path],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False
-            )
+    if not action:
+        return "Missing action", 400
 
-            logger.info(f"--- Output for {action} ---")
-            for line in result.stdout.splitlines():
-                logger.info(line)
+    # Clean up form data to be just the params for the payload
+    payload = data.copy()
 
-            if result.stderr:
-                logger.error(f"--- Error for {action} ---")
-                for line in result.stderr.splitlines():
-                    logger.error(line)
+    # Ensure PROJECT_ID is passed if not in form (though form usually overrides)
+    # The UI should map the user input to the variable names
 
-            if result.returncode == 0:
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"Success")
-                logger.info(f"Runbook {action} completed successfully.")
-            else:
-                self.send_response(500)
-                self.end_headers()
-                self.wfile.write(f"Script failed with exit code {result.returncode}".encode())
-                logger.error(f"Runbook {action} failed with exit code {result.returncode}")
+    # Construct Cloud Task
+    client = tasks_v2.CloudTasksClient()
+    parent = client.queue_path(PROJECT_ID, REGION, QUEUE_NAME)
 
-        except Exception as e:
-            logger.exception(f"Execution error: {e}")
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(str(e).encode())
+    # If SERVICE_URL is not set, we can't properly target ourselves
+    target_url = SERVICE_URL
+    if not target_url:
+        # Fallback for local testing or misconfig
+        logger.warning("SERVICE_URL env var not set. Task might fail if not fully configured.")
+        target_url = "http://localhost:8080/execute" # Placeholder
 
-    def do_GET(self):
-        # Health check
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
+    # The worker expects a JSON payload with 'action' and 'project_id' (legacy)
+    # and any other params as environment variables?
+    # Actually, the original worker logic put 'project_id' into env.
+    # We should update the worker logic to put ALL payload keys into env.
 
-def run(server_class=HTTPServer, handler_class=RunnerHandler):
-    port = int(os.environ.get('PORT', 8080))
-    server_address = ('', port)
-    httpd = server_class(server_address, handler_class)
-    logger.info(f"Starting server on port {port}...")
-    httpd.serve_forever()
+    task = {
+        "http_request": {
+            "http_method": tasks_v2.HttpMethod.POST,
+            "url": f"{target_url}/execute",
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps(payload).encode(),
+        }
+    }
+
+    if SERVICE_ACCOUNT_EMAIL:
+         task["http_request"]["oidc_token"] = {
+             "service_account_email": SERVICE_ACCOUNT_EMAIL
+         }
+
+    try:
+        response = client.create_task(request={"parent": parent, "task": task})
+        logger.info(f"Created task {response.name}")
+        return render_template('success.html', task_name=response.name)
+    except Exception as e:
+        logger.exception("Failed to create task")
+        return f"Error creating task: {e}", 500
+
+@app.route('/execute', methods=['POST'])
+def execute_runbook():
+    """The Worker Endpoint. Executes the bash script."""
+    # Input validation
+    try:
+        payload = request.get_json(force=True)
+    except Exception:
+        return "Invalid JSON", 400
+
+    action = payload.get('action')
+    if not action:
+        return "Missing 'action'", 400
+
+    # Sanitize action
+    if '..' in action or '/' in action:
+         logger.warning(f"Invalid action name attempt: {action}")
+         return "Invalid action name", 400
+
+    script_path = os.path.join(os.getcwd(), 'runbooks', f"{action}.sh")
+    if not os.path.exists(script_path):
+        logger.error(f"Runbook not found: {script_path}")
+        return f"Runbook '{action}' not found", 404
+
+    logger.info(f"Executing {action} with payload {payload}")
+
+    # Prepare Environment
+    env = os.environ.copy()
+    # Inject all payload keys as environment variables
+    # (e.g., project_id -> PROJECT_ID)
+    for key, value in payload.items():
+        if isinstance(value, str):
+            env[key.upper()] = value
+            # Also keep original case just in case? Standard bash convention is CAPS.
+
+    try:
+        result = subprocess.run(
+            [script_path],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+
+        # Log Output
+        logger.info(f"--- Output for {action} ---")
+        for line in result.stdout.splitlines():
+            logger.info(line)
+
+        if result.stderr:
+            logger.error(f"--- Error for {action} ---")
+            for line in result.stderr.splitlines():
+                logger.error(line)
+
+        if result.returncode == 0:
+            return "Success", 200
+        else:
+            return f"Script failed with exit code {result.returncode}", 500
+
+    except Exception as e:
+        logger.exception(f"Execution error: {e}")
+        return str(e), 500
 
 if __name__ == '__main__':
-    run()
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)

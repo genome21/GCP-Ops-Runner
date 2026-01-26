@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCP Ops Automation Portal</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #4285F4; text-align: center; }
+        .runbook-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 5px; }
+        .runbook-card:hover { background-color: #f9f9f9; }
+        .runbook-title { font-size: 1.2em; font-weight: bold; margin-bottom: 5px; }
+        .runbook-desc { color: #666; margin-bottom: 15px; font-size: 0.9em; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #4285F4; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
+        button:hover { background-color: #357ae8; }
+        .form-group { margin-bottom: 15px; }
+    </style>
+    <script>
+        function toggleForm(action) {
+            const forms = document.querySelectorAll('.runbook-form');
+            forms.forEach(f => f.style.display = 'none');
+            document.getElementById('form-' + action).style.display = 'block';
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>GCP Ops Automation Portal</h1>
+        <p style="text-align: center;">Execute critical remediation tasks securely.</p>
+        <hr>
+
+        {% if runbooks %}
+            {% for rb in runbooks %}
+            <div class="runbook-card">
+                <div class="runbook-title">{{ rb.action }}</div>
+                <div class="runbook-desc">{{ rb.description }}</div>
+                <button onclick="toggleForm('{{ rb.action }}')">Select Runbook</button>
+
+                <form id="form-{{ rb.action }}" class="runbook-form" action="/enqueue" method="POST" style="display:none; margin-top: 20px; padding-top: 15px; border-top: 1px dashed #ccc;">
+                    <input type="hidden" name="action" value="{{ rb.action }}">
+
+                    {% for param in rb.params %}
+                    <div class="form-group">
+                        <label for="{{ rb.action }}-{{ param.name }}">{{ param.label }}</label>
+                        <input type="text" id="{{ rb.action }}-{{ param.name }}" name="{{ param.name }}" required>
+                    </div>
+                    {% endfor %}
+
+                    <button type="submit" style="background-color: #34A853;">Execute Runbook</button>
+                </form>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p style="text-align: center;">No runbooks found.</p>
+        {% endif %}
+    </div>
+</body>
+</html>
