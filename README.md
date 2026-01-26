@@ -10,7 +10,7 @@ A serverless execution framework for Google Cloud operational runbooks. Uses Bas
 
 ## Directory Structure
 
-*   `runbooks/`: Contains the automation scripts (e.g., `hello_world.sh`, `restore_compute_editor.sh`).
+*   `runbooks/`: Contains the automation scripts (e.g., `hello_world.sh`, `create_test_vm.sh`).
 *   `src/`: Contains the dispatcher logic (`server.py`, `runner.sh`) and `Dockerfile`.
 *   `deploy/`: Contains infrastructure setup scripts.
 *   `trigger_fix.sh`: CLI helper to trigger a runbook.
@@ -62,12 +62,12 @@ To test the system with a safe, read-only runbook:
 ./trigger_fix.sh hello_world my-target-project
 ```
 
-**Example 2: Real-world Fix**
+**Example 2: Create Test VM**
 
-To restore the `roles/editor` role to the default Compute Engine service account in `my-target-project` (requires `restore_compute_editor.sh`):
+To create a cheap f1-micro VM for testing (requires Compute Engine API enabled on target project):
 
 ```bash
-./trigger_fix.sh restore_compute_editor my-target-project
+./trigger_fix.sh create_test_vm my-target-project
 ```
 
 ### Adding New Runbooks
@@ -79,6 +79,12 @@ To restore the `roles/editor` role to the default Compute Engine service account
     ```bash
     gcloud run deploy ops-runner --source . --platform managed --region ${REGION:-us-central1} --quiet
     ```
+
+## Logging
+
+The runner is configured to stream logs to Cloud Logging.
+- Standard output (stdout) from runbooks is logged at `INFO` level.
+- Standard error (stderr) from runbooks is logged at `ERROR` level.
 
 ## Security
 
