@@ -46,11 +46,24 @@ A serverless execution framework for Google Cloud operational runbooks. Uses Bas
 
     > **⚠️ Security Warning:** The `setup_infra.sh` script grants `roles/resourcemanager.projectIamAdmin` to the Runner Service Account. This is a high-privilege role designed to allow the runner to fix IAM permissions. For a production environment, you should restrict this Service Account's permissions to the minimum required for your specific runbooks.
 
+4.  **Accessing the UI:**
+    The Cloud Run service is deployed securely (`--no-allow-unauthenticated`). To access the Ops Portal UI, you have two options:
+
+    *   **Option A: Identity-Aware Proxy (Recommended for Production)**
+        To securely expose the UI to your internal team, set up [Identity-Aware Proxy (IAP) for Cloud Run](https://cloud.google.com/iap/docs/enabling-cloud-run). This requires configuring an HTTPS Load Balancer and OAuth credentials, which are outside the scope of the setup script.
+
+    *   **Option B: Local Proxy (For Testing)**
+        You can proxy the service to your local machine using `gcloud`:
+        ```bash
+        gcloud run services proxy ops-runner --project=YOUR_PROJECT_ID --port=8080
+        ```
+        Then visit `http://localhost:8080` in your browser.
+
 ## Usage
 
 ### 1. Web Portal (Recommended)
 
-Navigate to the Cloud Run Service URL in your browser.
+Navigate to the Cloud Run Service URL (if IAP configured) or `http://localhost:8080` (if using proxy).
 1.  Select a runbook from the list.
 2.  Fill in the required parameters (parsed from the runbook header).
 3.  Click **Execute Runbook** to queue the task.

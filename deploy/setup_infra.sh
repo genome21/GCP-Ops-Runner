@@ -63,7 +63,7 @@ echo "Service URL: $SERVICE_URL"
 echo "Updating Service with SERVICE_URL..."
 gcloud run services update "$SERVICE_NAME" \
     --region "$REGION" \
-    --set-env-vars="SERVICE_URL=$SERVICE_URL" \
+    --update-env-vars="SERVICE_URL=$SERVICE_URL" \
     --quiet
 
 echo "Setup complete."

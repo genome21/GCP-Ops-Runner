@@ -34,7 +34,7 @@ echo "Creating Task..."
 gcloud tasks create-http-task \
     --queue="$QUEUE_NAME" \
     --location="$REGION" \
-    --url="$SERVICE_URL" \
+    --url="${SERVICE_URL}/execute" \
     --header="Content-Type: application/json" \
     --body-content="$PAYLOAD" \
     --oidc-service-account-email="$SA_EMAIL"

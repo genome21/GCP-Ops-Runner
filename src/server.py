@@ -22,6 +22,8 @@ SERVICE_URL = os.environ.get("SERVICE_URL")
 # The service account to use for the OIDC token when the task invokes the worker
 SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
 
+logger.info(f"Server starting with Config: PROJECT_ID={PROJECT_ID}, REGION={REGION}, QUEUE_NAME={QUEUE_NAME}, SERVICE_ACCOUNT_EMAIL={SERVICE_ACCOUNT_EMAIL}")
+
 def get_runbooks():
     """Scans the runbooks directory and extracts metadata."""
     runbooks = []
