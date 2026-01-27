@@ -45,6 +45,7 @@ fi
 
 # Deploy Cloud Run Service
 echo "Deploying Cloud Run Service..."
+# Note: SERVICE_ACCOUNT_EMAIL must be explicitly exported or passed directly because it's a script variable, not an env var yet
 gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --platform managed \
@@ -52,7 +53,7 @@ gcloud run deploy "$SERVICE_NAME" \
     --service-account "$SA_EMAIL" \
     --no-allow-unauthenticated \
     --timeout=3600 \
-    --set-env-vars="PROJECT_ID=$PROJECT_ID,REGION=$REGION,QUEUE_NAME=$QUEUE_NAME,SERVICE_ACCOUNT_EMAIL=$SA_EMAIL" \
+    --set-env-vars "PROJECT_ID=${PROJECT_ID},REGION=${REGION},QUEUE_NAME=${QUEUE_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL}" \
     --quiet
 
 # Fetch Service URL and update it as an env var (circular dependency workaround)
