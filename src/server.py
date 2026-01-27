@@ -77,6 +77,11 @@ def enqueue_task():
     if not action:
         return "Missing action", 400
 
+    # Validate Configuration
+    if PROJECT_ID == "unknown-project":
+        logger.error("PROJECT_ID environment variable is missing.")
+        return "Configuration Error: PROJECT_ID not set on server.", 500
+
     # Clean up form data to be just the params for the payload
     payload = data.copy()
 
@@ -85,6 +90,7 @@ def enqueue_task():
 
     # Construct Cloud Task
     client = tasks_v2.CloudTasksClient()
+    logger.info(f"Enqueuing task to: projects/{PROJECT_ID}/locations/{REGION}/queues/{QUEUE_NAME}")
     parent = client.queue_path(PROJECT_ID, REGION, QUEUE_NAME)
 
     # If SERVICE_URL is not set, we can't properly target ourselves
