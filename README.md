@@ -94,6 +94,8 @@ To create a cheap f1-micro VM for testing (requires Compute Engine API enabled o
 
 ### Adding New Runbooks
 
+See the [Runbook Development Guide](RUNBOOK_GUIDE.md) for detailed instructions on creating, testing, and deploying new runbooks.
+
 1.  Create a new `.sh` script in the `runbooks/` directory.
 2.  Add metadata headers for the UI:
     ```bash
