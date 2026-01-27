@@ -1,6 +1,6 @@
 # GCP Ops Automation Framework
 
-A serverless execution framework for Google Cloud operational runbooks. Uses Bash + `gcloud` via Cloud Run and Cloud Tasks to provide a safe, auditable, and repeatable remediation interface for Ops teams.
+A serverless execution framework for Google Cloud operational runbooks. Features a user-friendly **Web UI ("Ops Portal")** for safe, self-service remediation. Uses Bash + `gcloud` via Cloud Run and Cloud Tasks to separate intent from execution.
 
 ![Ops Portal UI](docs/images/portal.png)
 
