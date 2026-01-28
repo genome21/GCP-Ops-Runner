@@ -11,6 +11,8 @@ from google.cloud import tasks_v2
 from authlib.integrations.flask_client import OAuth
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
+from googleapiclient import discovery
+import google.auth
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
@@ -23,7 +25,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # OAuth Setup
 oauth = OAuth(app)
-google = oauth.register(
+google_oauth = oauth.register(
     name='google',
     client_id=os.environ.get("GOOGLE_CLIENT_ID"),
     client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
@@ -48,11 +50,40 @@ SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
 
 logger.info(f"Server starting with Config: PROJECT_ID={PROJECT_ID}, REGION={REGION}, QUEUE_NAME={QUEUE_NAME}, SERVICE_ACCOUNT_EMAIL={SERVICE_ACCOUNT_EMAIL}")
 
+def check_user_access(email):
+    """
+    Checks if the user has the 'roles/iap.httpsResourceAccessor' role on the project.
+    """
+    try:
+        credentials, _ = google.auth.default()
+        service = discovery.build('cloudresourcemanager', 'v1', credentials=credentials)
+
+        policy = service.projects().getIamPolicy(resource=PROJECT_ID, body={}).execute()
+
+        for binding in policy.get('bindings', []):
+            if binding['role'] == 'roles/iap.httpsResourceAccessor':
+                members = binding.get('members', [])
+                if f"user:{email}" in members:
+                    logger.info(f"User {email} authorized via IAM.")
+                    return True
+
+        logger.warning(f"User {email} NOT authorized. Missing roles/iap.httpsResourceAccessor")
+        return False
+
+    except Exception as e:
+        logger.error(f"Error checking IAM permissions: {e}")
+        return False
+
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if 'user' not in session:
             return redirect(url_for('login'))
+
+        # Check authorization (cached in session)
+        if not session.get('authorized'):
+            return "Unauthorized: You do not have permission to access this portal.", 403
+
         return f(*args, **kwargs)
     return decorated_function
 
@@ -124,19 +155,25 @@ def login():
     if not os.environ.get("GOOGLE_CLIENT_ID"):
         return "Google Client ID not configured", 500
     redirect_uri = url_for('auth', _external=True)
-    return google.authorize_redirect(redirect_uri)
+    return google_oauth.authorize_redirect(redirect_uri)
 
 @app.route('/auth')
 def auth():
     try:
-        token = google.authorize_access_token()
+        token = google_oauth.authorize_access_token()
         user_info = token.get('userinfo')
         # If userinfo is missing from token (sometimes happens depending on scope/response), fetch it
         if not user_info:
-             user_info = google.userinfo()
+             user_info = google_oauth.userinfo()
 
-        session['user'] = user_info
-        return redirect('/')
+        email = user_info.get('email')
+        if check_user_access(email):
+            session['user'] = user_info
+            session['authorized'] = True
+            return redirect('/')
+        else:
+            return "Unauthorized: You do not have the required IAM role (roles/iap.httpsResourceAccessor).", 403
+
     except Exception as e:
         logger.error(f"Auth failed: {e}")
         return f"Authentication failed: {e}", 400
@@ -144,6 +181,7 @@ def auth():
 @app.route('/logout')
 def logout():
     session.pop('user', None)
+    session.pop('authorized', None)
     return redirect('/')
 
 @app.route('/', methods=['GET'])

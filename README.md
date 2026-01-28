@@ -115,6 +115,7 @@ The runner is configured to stream logs to Cloud Logging.
 
 *   **Isolation:** Runbooks execute in a serverless container.
 *   **Authentication:**
-    *   **User Access:** Protected by Google Sign-In (OAuth 2.0). Only authenticated users can access the portal and enqueue tasks.
+    *   **User Access:** Protected by Google Sign-In (OAuth 2.0).
+    *   **Authorization:** The application enforces authorization by checking if the signed-in user has the `roles/iap.httpsResourceAccessor` role on the project. This mimics IAP behavior at the application level.
     *   **Task Execution:** Protected by OIDC Token Verification. The worker endpoint `/execute` validates that the request comes from a trusted Service Account via Cloud Tasks.
 *   **Least Privilege:** The Runner Service Account should only have the permissions necessary for the runbooks. The default setup grants `Project IAM Admin` for demonstration purposes; audit and scope this down for your needs.
