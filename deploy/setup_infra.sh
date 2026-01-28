@@ -7,6 +7,12 @@ SERVICE_NAME="ops-runner"
 SA_NAME="ops-runner-sa"
 QUEUE_NAME="ops-queue"
 
+# Credentials for Google Sign-In
+# You can set these before running the script
+GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-placeholder_client_id}"
+GOOGLE_CLIENT_SECRET="${GOOGLE_CLIENT_SECRET:-placeholder_client_secret}"
+FLASK_SECRET_KEY="${FLASK_SECRET_KEY:-$(openssl rand -hex 16)}"
+
 echo "Deploying to Project: $PROJECT_ID in Region: $REGION"
 
 # Enable APIs
@@ -37,6 +43,11 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$SA_EMAIL" \
     --role="roles/cloudtasks.enqueuer"
 
+echo "Granting Service Account User (to allow OIDC token generation)..."
+gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/iam.serviceAccountUser"
+
 # Create Cloud Tasks Queue
 echo "Creating Cloud Tasks Queue..."
 if ! gcloud tasks queues describe "$QUEUE_NAME" --location="$REGION" > /dev/null 2>&1; then
@@ -46,14 +57,15 @@ fi
 # Deploy Cloud Run Service
 echo "Deploying Cloud Run Service..."
 # Note: SERVICE_ACCOUNT_EMAIL must be explicitly exported or passed directly because it's a script variable, not an env var yet
+# We switch to --allow-unauthenticated because authentication is now handled by the Application (Google Sign-In)
 gcloud run deploy "$SERVICE_NAME" \
     --source . \
     --platform managed \
     --region "$REGION" \
     --service-account "$SA_EMAIL" \
-    --no-allow-unauthenticated \
+    --allow-unauthenticated \
     --timeout=3600 \
-    --set-env-vars "PROJECT_ID=${PROJECT_ID},REGION=${REGION},QUEUE_NAME=${QUEUE_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL}" \
+    --set-env-vars "PROJECT_ID=${PROJECT_ID},REGION=${REGION},QUEUE_NAME=${QUEUE_NAME},SERVICE_ACCOUNT_EMAIL=${SA_EMAIL},GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID},GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET},FLASK_SECRET_KEY=${FLASK_SECRET_KEY}" \
     --quiet
 
 # Fetch Service URL and update it as an env var (circular dependency workaround)

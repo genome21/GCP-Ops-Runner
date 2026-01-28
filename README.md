@@ -23,50 +23,46 @@ A serverless execution framework for Google Cloud operational runbooks. Features
     *   Google Cloud SDK (`gcloud`) installed and authenticated.
     *   Appropriate permissions to create projects, service accounts, and Cloud Run services.
 
-2.  **Configuration (Optional):**
-    By default, resources are deployed to `us-central1`. You can override this by setting the `REGION` environment variable.
-
-    ```bash
-    export REGION=us-east1
-    ```
+2.  **Google Sign-In Setup:**
+    The Ops Portal uses Google Sign-In to authenticate users. You must create OAuth credentials in the Google Cloud Console:
+    1.  Go to **APIs & Services > Credentials**.
+    2.  Click **Create Credentials > OAuth client ID**.
+    3.  Application Type: **Web application**.
+    4.  Name: `Ops Portal`.
+    5.  **Authorized Redirect URIs:** You will need to add the Cloud Run Service URL + `/auth` after deployment (e.g., `https://ops-runner-xyz.a.run.app/auth`). For now, you can leave it blank or put a placeholder.
+    6.  Copy the **Client ID** and **Client Secret**.
 
 3.  **Deploy Infrastructure:**
-    Run the setup script to enable APIs, create the service account, queue, and deploy the Cloud Run service.
+    Export your credentials and region, then run the setup script.
 
     ```bash
+    export REGION=us-central1
+    export GOOGLE_CLIENT_ID="your-client-id"
+    export GOOGLE_CLIENT_SECRET="your-client-secret"
+
     ./deploy/setup_infra.sh
     ```
 
+    *Note: After deployment, copy the Service URL printed at the end and add it to the "Authorized Redirect URIs" in the GCP Console (append `/auth` to the URL).*
+
     This script will:
-    *   Enable required APIs (Cloud Run, Cloud Tasks, IAM, etc.).
+    *   Enable required APIs.
     *   Create a Service Account (`ops-runner-sa`).
     *   Grant **Project IAM Admin**, **Cloud Run Invoker**, and **Cloud Tasks Enqueuer** roles.
     *   Create a Cloud Tasks queue (`ops-queue`).
-    *   Deploy the Cloud Run service (`ops-runner`).
+    *   Deploy the Cloud Run service (`ops-runner`) with **public access** enabled (authentication is enforced by the application).
 
     > **⚠️ Security Warning:** The `setup_infra.sh` script grants `roles/resourcemanager.projectIamAdmin` to the Runner Service Account. This is a high-privilege role designed to allow the runner to fix IAM permissions. For a production environment, you should restrict this Service Account's permissions to the minimum required for your specific runbooks.
-
-4.  **Accessing the UI:**
-    The Cloud Run service is deployed securely (`--no-allow-unauthenticated`). To access the Ops Portal UI, you have two options:
-
-    *   **Option A: Identity-Aware Proxy (Recommended for Production)**
-        To securely expose the UI to your internal team, set up [Identity-Aware Proxy (IAP) for Cloud Run](https://cloud.google.com/iap/docs/enabling-cloud-run). This requires configuring an HTTPS Load Balancer and OAuth credentials, which are outside the scope of the setup script.
-
-    *   **Option B: Local Proxy (For Testing)**
-        You can proxy the service to your local machine using `gcloud`:
-        ```bash
-        gcloud run services proxy ops-runner --project=YOUR_PROJECT_ID --port=8080
-        ```
-        Then visit `http://localhost:8080` in your browser.
 
 ## Usage
 
 ### 1. Web Portal (Recommended)
 
-Navigate to the Cloud Run Service URL (if IAP configured) or `http://localhost:8080` (if using proxy).
-1.  Select a runbook from the list.
-2.  Fill in the required parameters (parsed from the runbook header).
-3.  Click **Execute Runbook** to queue the task.
+Navigate to the Cloud Run Service URL.
+1.  You will be redirected to Google Sign-In. Log in with your Google account.
+2.  Select a runbook from the list.
+3.  Fill in the required parameters (parsed from the runbook header).
+4.  Click **Execute Runbook** to queue the task.
 
 ### 2. CLI Trigger
 
@@ -118,5 +114,7 @@ The runner is configured to stream logs to Cloud Logging.
 ## Security
 
 *   **Isolation:** Runbooks execute in a serverless container.
-*   **Authentication:** The Cloud Run service only accepts authenticated requests (OIDC) from the allowed Service Account.
+*   **Authentication:**
+    *   **User Access:** Protected by Google Sign-In (OAuth 2.0). Only authenticated users can access the portal and enqueue tasks.
+    *   **Task Execution:** Protected by OIDC Token Verification. The worker endpoint `/execute` validates that the request comes from a trusted Service Account via Cloud Tasks.
 *   **Least Privilege:** The Runner Service Account should only have the permissions necessary for the runbooks. The default setup grants `Project IAM Admin` for demonstration purposes; audit and scope this down for your needs.

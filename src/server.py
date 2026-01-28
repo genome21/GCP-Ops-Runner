@@ -4,14 +4,38 @@ import subprocess
 import sys
 import logging
 import re
-from flask import Flask, request, render_template, jsonify
+from functools import wraps
+from flask import Flask, request, render_template, jsonify, session, redirect, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 from google.cloud import tasks_v2
+from authlib.integrations.flask_client import OAuth
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-secret-key")
+# Apply ProxyFix to handle HTTPS behind Cloud Run
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+# OAuth Setup
+oauth = OAuth(app)
+google = oauth.register(
+    name='google',
+    client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+    client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+    access_token_url='https://oauth2.googleapis.com/token',
+    access_token_params=None,
+    authorize_url='https://accounts.google.com/o/oauth2/auth',
+    authorize_params=None,
+    api_base_url='https://www.googleapis.com/oauth2/v1/',
+    userinfo_endpoint='https://openidconnect.googleapis.com/v1/userinfo',  # This is only needed if using userinfo()
+    client_kwargs={'scope': 'openid email profile'},
+    server_metadata_url='https://accounts.google.com/.well-known/openid-configuration'
+)
 
 # Configuration
 PROJECT_ID = os.environ.get("PROJECT_ID", "unknown-project")
@@ -23,6 +47,39 @@ SERVICE_URL = os.environ.get("SERVICE_URL")
 SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
 
 logger.info(f"Server starting with Config: PROJECT_ID={PROJECT_ID}, REGION={REGION}, QUEUE_NAME={QUEUE_NAME}, SERVICE_ACCOUNT_EMAIL={SERVICE_ACCOUNT_EMAIL}")
+
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def verify_oidc_token():
+    """Verifies the Bearer token in the Authorization header."""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header:
+        logger.warning("Missing Authorization header in /execute request")
+        return False
+
+    try:
+        token = auth_header.split(" ")[1]
+
+        # The audience must match the target URL (e.g., https://service-url/execute)
+        # Cloud Tasks sends the token with audience = target_url
+        expected_audience = f"{SERVICE_URL}/execute"
+        if not SERVICE_URL:
+            logger.error("SERVICE_URL not set, cannot verify audience")
+            return False
+
+        id_info = id_token.verify_oauth2_token(token, google_requests.Request(), audience=expected_audience)
+
+        logger.info(f"Verified OIDC token for {id_info.get('email')} with audience {id_info.get('aud')}")
+        return True
+    except Exception as e:
+        logger.error(f"Token verification failed: {e}")
+        return False
 
 def get_runbooks():
     """Scans the runbooks directory and extracts metadata."""
@@ -62,13 +119,42 @@ def get_runbooks():
             })
     return runbooks
 
+@app.route('/login')
+def login():
+    if not os.environ.get("GOOGLE_CLIENT_ID"):
+        return "Google Client ID not configured", 500
+    redirect_uri = url_for('auth', _external=True)
+    return google.authorize_redirect(redirect_uri)
+
+@app.route('/auth')
+def auth():
+    try:
+        token = google.authorize_access_token()
+        user_info = token.get('userinfo')
+        # If userinfo is missing from token (sometimes happens depending on scope/response), fetch it
+        if not user_info:
+             user_info = google.userinfo()
+
+        session['user'] = user_info
+        return redirect('/')
+    except Exception as e:
+        logger.error(f"Auth failed: {e}")
+        return f"Authentication failed: {e}", 400
+
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    return redirect('/')
+
 @app.route('/', methods=['GET'])
+@login_required
 def index():
     """Renders the Portal UI."""
     runbooks = get_runbooks()
-    return render_template('index.html', runbooks=runbooks, project_id=PROJECT_ID)
+    return render_template('index.html', runbooks=runbooks, project_id=PROJECT_ID, user=session.get('user'))
 
 @app.route('/enqueue', methods=['POST'])
+@login_required
 def enqueue_task():
     """Enqueues a task to Cloud Tasks."""
     data = request.form.to_dict()
@@ -130,6 +216,12 @@ def enqueue_task():
 @app.route('/execute', methods=['POST'])
 def execute_runbook():
     """The Worker Endpoint. Executes the bash script."""
+
+    # Security: Verify OIDC Token
+    # Since we are using --allow-unauthenticated, we MUST verify the token here
+    if not verify_oidc_token():
+        return "Unauthorized: Invalid or Missing Token", 401
+
     # Input validation
     try:
         payload = request.get_json(force=True)

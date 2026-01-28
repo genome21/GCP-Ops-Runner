@@ -1,3 +1,6 @@
 flask
 gunicorn
 google-cloud-tasks
+authlib
+requests
+google-auth
