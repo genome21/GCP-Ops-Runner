@@ -8,6 +8,8 @@
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; padding: 20px; }
         .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
         h1 { color: #4285F4; text-align: center; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .user-info { font-size: 0.9em; color: #666; }
         .runbook-card { border: 1px solid #ddd; padding: 15px; margin-bottom: 15px; border-radius: 5px; }
         .runbook-card:hover { background-color: #f9f9f9; }
         .runbook-title { font-size: 1.2em; font-weight: bold; margin-bottom: 5px; }
@@ -17,6 +19,7 @@
         button { background-color: #4285F4; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
         button:hover { background-color: #357ae8; }
         .form-group { margin-bottom: 15px; }
+        .nav-links a { margin-right: 15px; color: #4285F4; text-decoration: none; font-weight: bold; }
     </style>
     <script>
         function toggleForm(action) {
@@ -28,6 +31,18 @@
 </head>
 <body>
     <div class="container">
+        <div class="header">
+            <div class="nav-links">
+                <a href="/">Home</a>
+                <a href="/rules">Rules Engine</a>
+            </div>
+            <div class="user-info">
+                {% if user %}
+                    Signed in as {{ user.name }} (<a href="/logout">Logout</a>)
+                {% endif %}
+            </div>
+        </div>
+
         <h1>GCP Ops Automation Portal</h1>
         <p style="text-align: center;">Execute critical remediation tasks securely.</p>
         <hr>

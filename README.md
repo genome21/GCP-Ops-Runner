@@ -111,13 +111,19 @@ See the [Runbook Development Guide](RUNBOOK_GUIDE.md) for detailed instructions 
 
 The framework supports reacting to GCP events via EventArc.
 
-### Use Case: Sync Custom Groups
-When a new Project is created, the system checks if it has the label `gcp-adv`. If so, it attempts to add a specific Cloud Identity group (`[PROJECT_ID]-application-team@[DOMAIN]`) to the project with `roles/viewer`.
+### Use Case: Dynamic Group Sync (Rules Engine)
+
+The framework includes a **Rules Engine** (backed by Firestore) that allows you to define dynamic automation rules via the Web UI.
 
 1.  **Trigger:** `google.cloud.resourcemanager.project.v1.create` (via Cloud Audit Logs).
-2.  **Filter:** Checks for `gcp-adv` label on the project.
-3.  **Action:** Enqueues the `sync_custom_groups` runbook.
-4.  **Retry:** If the group does not exist yet (e.g., syncing from Azure AD), the runbook exits with error, causing Cloud Tasks to retry until success (or timeout).
+2.  **Evaluation:** The system checks the new project's labels against the rules defined in Firestore.
+3.  **Action:** If a rule matches (e.g., Label Key `type` == `gcp-adv`), the system iterates through the configured **Target Group Templates**.
+    *   Example Template: `{project_id}-admins@{domain}`
+    *   The system resolves the template variables and triggers the `add_group_to_project` runbook for each group.
+4.  **Retry:** If the group does not exist yet (e.g., syncing from Azure AD), the runbook exits with error, causing Cloud Tasks to retry until success.
+
+**Managing Rules:**
+Access the "Rules Engine" from the Ops Portal navigation bar to Add/Delete rules dynamically without changing code.
 
 ## Logging
 

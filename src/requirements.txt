@@ -6,3 +6,4 @@ requests
 google-auth
 google-api-python-client
 cloudevents
+google-cloud-firestore

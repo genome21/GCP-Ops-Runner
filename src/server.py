@@ -14,6 +14,7 @@ from google.auth.transport import requests as google_requests
 from googleapiclient import discovery
 import google.auth
 from cloudevents.http import from_http
+from google.cloud import firestore
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
@@ -52,6 +53,13 @@ SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
 DOMAIN = os.environ.get("DOMAIN", "example.com")
 
 logger.info(f"Server starting with Config: PROJECT_ID={PROJECT_ID}, REGION={REGION}, QUEUE_NAME={QUEUE_NAME}, SERVICE_ACCOUNT_EMAIL={SERVICE_ACCOUNT_EMAIL}, DOMAIN={DOMAIN}")
+
+# Initialize Firestore
+try:
+    db = firestore.Client(project=PROJECT_ID)
+except Exception as e:
+    logger.warning(f"Failed to initialize Firestore: {e}. Rules engine will not work.")
+    db = None
 
 def check_user_access(email):
     """
@@ -113,20 +121,6 @@ def verify_oidc_token(audience_override=None):
         else:
             # Allow both specific endpoint (Cloud Tasks) and root service (EventArc)
             allowed_audiences = [f"{SERVICE_URL}/execute", SERVICE_URL]
-
-        # verify_oauth2_token doesn't support a list of audiences directly,
-        # so we decode without audience verification first, check aud, then verify.
-        # OR just try/except with each audience.
-
-        # Simpler approach: Verify signature first, then check audience manually
-        # But google library requires audience for verify_oauth2_token to be secure.
-
-        # We will try verifying against the primary expected audience for the route
-        # For this function, we default to the request.url or let caller specify.
-
-        # Improved Strategy: The caller knows what endpoint they are protecting.
-        # But we reused this function.
-        # Let's iterate.
 
         verified_token = None
         last_error = None
@@ -228,6 +222,67 @@ def index():
     runbooks = get_runbooks()
     return render_template('index.html', runbooks=runbooks, project_id=PROJECT_ID, user=session.get('user'))
 
+@app.route('/rules', methods=['GET'])
+@login_required
+def rules_list():
+    """Renders the Rules Management UI."""
+    if not db:
+        return "Firestore not configured.", 500
+
+    rules = []
+    try:
+        docs = db.collection('automation_rules').stream()
+        for doc in docs:
+            rule = doc.to_dict()
+            rule['id'] = doc.id
+            rules.append(rule)
+    except Exception as e:
+        logger.error(f"Error fetching rules: {e}")
+        return f"Error fetching rules: {e}", 500
+
+    return render_template('rules.html', rules=rules, user=session.get('user'))
+
+@app.route('/rules/add', methods=['POST'])
+@login_required
+def add_rule():
+    if not db:
+        return "Firestore not configured.", 500
+
+    label_key = request.form.get('label_key')
+    label_value = request.form.get('label_value')
+    groups_str = request.form.get('target_groups') # Comma separated
+
+    if not label_key or not label_value or not groups_str:
+        return "Missing fields", 400
+
+    target_groups = [g.strip() for g in groups_str.split(',') if g.strip()]
+
+    try:
+        db.collection('automation_rules').add({
+            'label_key': label_key,
+            'label_value': label_value,
+            'target_groups': target_groups
+        })
+        return redirect('/rules')
+    except Exception as e:
+        return f"Error adding rule: {e}", 500
+
+@app.route('/rules/delete', methods=['POST'])
+@login_required
+def delete_rule():
+    if not db:
+        return "Firestore not configured.", 500
+
+    rule_id = request.form.get('rule_id')
+    if not rule_id:
+        return "Missing rule_id", 400
+
+    try:
+        db.collection('automation_rules').document(rule_id).delete()
+        return redirect('/rules')
+    except Exception as e:
+        return f"Error deleting rule: {e}", 500
+
 def create_task(action, payload):
     """Helper to create cloud task"""
     client = tasks_v2.CloudTasksClient()
@@ -293,27 +348,10 @@ def handle_project_created_event():
         event = from_http(request.headers, request.get_data())
         data = event.data
 
-        # Log the full event for debugging
-        # logger.info(f"Received Event: {data}")
-
-        # Check if it is a Project Create Audit Log
-        # The structure depends on the Audit Log version.
-        # Typically: protoPayload.methodName = "CreateProject"
-        # resourceName = "projects/12345"
-
         method_name = data.get("protoPayload", {}).get("methodName")
         if method_name != "CreateProject":
              logger.info(f"Ignored event method: {method_name}")
              return "Ignored", 200
-
-        resource_name = data.get("protoPayload", {}).get("resourceName")
-        # Format: projects/PROJECT_ID (sometimes number, sometimes ID)
-        # Actually CreateProject response typically has the Project Object.
-        # Wait, CreateProject request might not have the ID if it's async?
-        # Let's rely on resourceName or response.
-
-        # Better: use the 'resource' field from the audit log
-        # resource.type="project", resource.labels.project_id
 
         target_project_id = data.get("resource", {}).get("labels", {}).get("project_id")
 
@@ -323,32 +361,56 @@ def handle_project_created_event():
 
         logger.info(f"New Project Detected: {target_project_id}")
 
-        # Check Labels
+        # Get Labels
         credentials, _ = google.auth.default()
         service = discovery.build('cloudresourcemanager', 'v3', credentials=credentials)
         project = service.projects().get(name=f"projects/{target_project_id}").execute()
-
         labels = project.get("labels", {})
-        # Check if ANY label has value "gcp-adv" OR key "gcp-adv"
-        is_match = False
-        for k, v in labels.items():
-            if k == "gcp-adv" or v == "gcp-adv":
-                is_match = True
-                break
 
-        if is_match:
-            logger.info(f"Project {target_project_id} matches label criteria. Triggering sync.")
-            # Trigger Task
-            payload = {
-                "action": "sync_custom_groups",
-                "project_id": target_project_id,
-                "domain": DOMAIN
-            }
-            create_task("sync_custom_groups", payload)
-            return "Triggered", 200
-        else:
-            logger.info(f"Project {target_project_id} does not match label criteria.")
-            return "Skipped", 200
+        # Rules Engine Logic
+        if not db:
+            logger.warning("Firestore not configured. Skipping Rules Engine.")
+            return "Skipped (No DB)", 200
+
+        # Fetch all rules (simplification for scale)
+        rules_ref = db.collection('automation_rules')
+        rules = rules_ref.stream()
+
+        triggered_count = 0
+
+        for rule_doc in rules:
+            rule = rule_doc.to_dict()
+            label_key = rule.get('label_key')
+            label_value = rule.get('label_value')
+            target_groups = rule.get('target_groups', [])
+
+            # Check for match
+            # Match if label key exists and value matches
+            # OR if label key exists and rule value is "*" (wildcard support optional, not requested but good)
+            # User requirement: "if a particular project label equals something like gcp-adv"
+            # Implies Key=Value check.
+
+            project_label_value = labels.get(label_key)
+
+            if project_label_value == label_value:
+                logger.info(f"Rule {rule_doc.id} matched for {label_key}={label_value}")
+
+                for group_tmpl in target_groups:
+                    # Resolve Template
+                    # Supports {project_id}, {domain}
+                    group_email = group_tmpl.format(project_id=target_project_id, domain=DOMAIN)
+
+                    logger.info(f"Triggering add_group_to_project for {group_email}")
+
+                    payload = {
+                        "action": "add_group_to_project",
+                        "project_id": target_project_id,
+                        "group_email": group_email
+                    }
+                    create_task("add_group_to_project", payload)
+                    triggered_count += 1
+
+        return f"Triggered {triggered_count} tasks", 200
 
     except Exception as e:
         logger.exception(f"Error processing event: {e}")

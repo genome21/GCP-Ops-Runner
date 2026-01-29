@@ -18,7 +18,7 @@ echo "Deploying to Project: $PROJECT_ID in Region: $REGION"
 
 # Enable APIs
 echo "Enabling APIs..."
-gcloud services enable run.googleapis.com cloudtasks.googleapis.com cloudbuild.googleapis.com iam.googleapis.com cloudresourcemanager.googleapis.com eventarc.googleapis.com cloudidentity.googleapis.com
+gcloud services enable run.googleapis.com cloudtasks.googleapis.com cloudbuild.googleapis.com iam.googleapis.com cloudresourcemanager.googleapis.com eventarc.googleapis.com cloudidentity.googleapis.com firestore.googleapis.com
 
 # Create Service Account
 echo "Creating Service Account..."
@@ -44,6 +44,11 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$SA_EMAIL" \
     --role="roles/cloudtasks.enqueuer"
 
+echo "Granting Datastore User (for Firestore)..."
+gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:$SA_EMAIL" \
+    --role="roles/datastore.user"
+
 echo "Granting Service Account User (to allow OIDC token generation)..."
 gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
     --member="serviceAccount:$SA_EMAIL" \
@@ -56,6 +61,11 @@ echo "Attempting to grant Groups Reader (best effort)..."
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$SA_EMAIL" \
     --role="roles/cloudidentity.groupsReader" || echo "Warning: Could not grant Groups Reader. Ensure SA has permissions to read Cloud Identity groups."
+
+echo "Creating Firestore Database (if needed)..."
+if ! gcloud firestore databases list --location="$REGION" --format="value(name)" | grep -q "projects/$PROJECT_ID/databases/(default)"; then
+    gcloud firestore databases create --location="$REGION" --type=firestore-native --quiet || echo "Warning: Firestore creation might have failed or already exists."
+fi
 
 # EventArc Trigger Permissions
 # The Trigger Identity (ops-runner-sa) needs to be able to invoke the Cloud Run service.
