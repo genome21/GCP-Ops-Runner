@@ -398,7 +398,14 @@ def handle_project_created_event():
                 for group_tmpl in target_groups:
                     # Resolve Template
                     # Supports {project_id}, {domain}
-                    group_email = group_tmpl.format(project_id=target_project_id, domain=DOMAIN)
+                    try:
+                        group_email = group_tmpl.format(project_id=target_project_id, domain=DOMAIN)
+                    except KeyError as e:
+                        logger.error(f"Rule {rule_doc.id} template error: Missing key {e} in template '{group_tmpl}'")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Rule {rule_doc.id} template formatting error: {e}")
+                        continue
 
                     logger.info(f"Triggering add_group_to_project for {group_email}")
 
