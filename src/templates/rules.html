@@ -28,6 +28,7 @@
         <table>
             <thead>
                 <tr>
+                    <th>Rule Name</th>
                     <th>Label Key</th>
                     <th>Label Value</th>
                     <th>Target Groups (Template)</th>
@@ -38,6 +39,7 @@
                 {% if rules %}
                     {% for rule in rules %}
                     <tr>
+                        <td><strong>{{ rule.name }}</strong></td>
                         <td>{{ rule.label_key }}</td>
                         <td>{{ rule.label_value }}</td>
                         <td>
@@ -62,6 +64,9 @@
         <div class="form-container">
             <h3>Add New Rule</h3>
             <form action="/rules/add" method="POST">
+                <label for="rule_name">Rule Name</label>
+                <input type="text" id="rule_name" name="rule_name" placeholder="e.g. Adv Team Sync" required>
+
                 <label for="label_key">Label Key</label>
                 <input type="text" id="label_key" name="label_key" placeholder="e.g. type" required>
 
@@ -69,8 +74,8 @@
                 <input type="text" id="label_value" name="label_value" placeholder="e.g. gcp-adv" required>
 
                 <label for="target_groups">Target Groups Template (Comma Separated)</label>
-                <input type="text" id="target_groups" name="target_groups" placeholder="e.g. {project_id}-admins@{domain}, security-audit@{domain}" required>
-                <p style="font-size: 0.8em; color: #666;">Available variables: <code>{project_id}</code>, <code>{domain}</code></p>
+                <input type="text" id="target_groups" name="target_groups" placeholder="e.g. {project_id}-admins@{domain}, static-group@other-domain.com" required>
+                <p style="font-size: 0.8em; color: #666;">Available variables: <code>{project_id}</code>, <code>{domain}</code>. You can also specify full email addresses for custom domains.</p>
 
                 <button type="submit">Add Rule</button>
             </form>

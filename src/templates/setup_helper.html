@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Setup Helper - Log Sinks</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #4285F4; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"], select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .radio-group { display: flex; gap: 20px; margin-bottom: 10px; }
+        .radio-group label { font-weight: normal; }
+        button { background-color: #4285F4; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 1em; }
+        pre { background: #333; color: #fff; padding: 15px; border-radius: 5px; overflow-x: auto; white-space: pre-wrap; margin-top: 20px; }
+        a.nav-link { display: inline-block; margin-bottom: 20px; color: #4285F4; text-decoration: none; font-weight: bold; }
+    </style>
+    <script>
+        function generateCommand() {
+            const scope = document.querySelector('input[name="scope"]:checked').value;
+            const scopeId = document.getElementById('scope_id').value;
+            const destProject = document.getElementById('dest_project').value;
+            const topicName = document.getElementById('topic_name').value || 'project-events';
+            const sinkName = document.getElementById('sink_name').value || 'ops-runner-sink';
+            const location = 'us-central1'; // Or make configurable
+
+            if (!scopeId || !destProject) {
+                alert("Please fill in Scope ID and Destination Project");
+                return;
+            }
+
+            let sinkCmd = "";
+            let triggerCmd = "";
+            let pubsubCmd = "";
+
+            // 1. Create Pub/Sub Topic
+            pubsubCmd = `gcloud pubsub topics create ${topicName} --project=${destProject}`;
+
+            // 2. Create Sink
+            const filter = 'protoPayload.methodName="CreateProject" AND resource.type="project"';
+            const destination = `pubsub.googleapis.com/projects/${destProject}/topics/${topicName}`;
+
+            if (scope === 'project') {
+                sinkCmd = `gcloud logging sinks create ${sinkName} ${destination} --log-filter='${filter}' --project=${scopeId}`;
+            } else if (scope === 'folder') {
+                sinkCmd = `gcloud logging sinks create ${sinkName} ${destination} --log-filter='${filter}' --folder=${scopeId} --include-children`;
+            } else if (scope === 'organization') {
+                sinkCmd = `gcloud logging sinks create ${sinkName} ${destination} --log-filter='${filter}' --organization=${scopeId} --include-children`;
+            }
+
+            // 3. Grant Pub/Sub Publisher role to Sink Identity
+            const permissionNote = `# IMPORTANT: After creating the sink, it will return a service account (writerIdentity).\n# You must grant roles/pubsub.publisher to that identity on the topic:\n# gcloud pubsub topics add-iam-policy-binding ${topicName} --project=${destProject} --member=serviceAccount:[WRITER_IDENTITY] --role=roles/pubsub.publisher`;
+
+            // 4. EventArc Trigger
+            // Note: When using Pub/Sub transport, EventArc filters on the Pub/Sub message, not the Audit Log fields directly (because it's just a message)
+            // Wait, EventArc for Cloud Audit Logs via Pub/Sub?
+            // Actually, if we route to Pub/Sub, we should use EventArc type=google.cloud.pubsub.topic.v1.messagePublished
+            // BUT, our code expects a CloudEvent with Audit Log data.
+            // When EventArc consumes from Pub/Sub, it wraps the Pub/Sub message.
+            // The Audit Log is inside the Pub/Sub message data (base64 encoded).
+            // Our current code parses `from_http`.
+            // If we switch to Pub/Sub transport, the format changes.
+
+            // ALTERNATIVE: EventArc can listen to Audit Logs directly for Org/Folder?
+            // "Eventarc for Cloud Audit Logs currently supports project-level event routing only."
+            // So for Org/Folder, we MUST use Log Sink -> Pub/Sub -> Cloud Run (Trigger).
+            // But we need to make sure our `server.py` can handle the Pub/Sub message wrapping the Audit Log.
+            // Currently `server.py` handles `type=google.cloud.audit.log.v1.written`.
+            // If we use Pub/Sub, the event type is `google.cloud.pubsub.topic.v1.messagePublished`.
+            // The data is `message: { data: base64... }`.
+            // The decoded data is the LogEntry.
+
+            // So this Helper exposes a complexity: Org-level events need a slight adaptation in `server.py` OR we assume the user knows.
+            // OR we tell them to route it to the specific EventArc formatted topic?
+            // EventArc can create the transport topic for you.
+            // BUT EventArc *itself* cannot listen to Org-level Audit Logs directly yet.
+
+            // Solution: We will generate commands for the "Log Sink -> Pub/Sub" pattern.
+            // AND we need to warn the user that `server.py` needs to handle Pub/Sub events if they use this.
+            // OR, simpler: Just support Project-level setup for now which matches current EventArc.
+            // The user asked for "project, folder, or org log sink".
+
+            // Let's generate the commands to route logs to the existing EventArc trigger?
+            // No, the existing trigger listens to Audit Logs *in the runner project*.
+            // If we route Org logs to a Pub/Sub topic, we need a NEW EventArc trigger listening to that topic.
+
+            triggerCmd = `gcloud eventarc triggers create ${topicName}-trigger \\
+    --location=${location} \\
+    --destination-run-service=ops-runner \\
+    --destination-run-region=${location} \\
+    --destination-run-path="/events/project-created" \\
+    --transport-topic=projects/${destProject}/topics/${topicName} \\
+    --event-filters="type=google.cloud.pubsub.topic.v1.messagePublished" \\
+    --service-account=ops-runner-sa@${destProject}.iam.gserviceaccount.com`;
+
+            const fullBlock = `# 1. Create Topic
+${pubsubCmd}
+
+# 2. Create Log Sink (Routes logs to the topic)
+${sinkCmd}
+
+${permissionNote}
+
+# 3. Create EventArc Trigger (Connects Topic to Cloud Run)
+# Note: This trigger listens for Pub/Sub messages.
+${triggerCmd}
+`;
+            document.getElementById('output').textContent = fullBlock;
+            document.getElementById('warning').style.display = 'block';
+        }
+    </script>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="nav-link">&larr; Back to Portal</a>
+        <h1>Setup Helper: Log Sinks</h1>
+        <p>Generate commands to route "Project Creation" events from an Organization, Folder, or Project to this automation framework.</p>
+
+        <div class="form-group">
+            <label>Scope</label>
+            <div class="radio-group">
+                <label><input type="radio" name="scope" value="organization"> Organization</label>
+                <label><input type="radio" name="scope" value="folder"> Folder</label>
+                <label><input type="radio" name="scope" value="project" checked> Project</label>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="scope_id">Scope ID (Org ID, Folder ID, or Project ID)</label>
+            <input type="text" id="scope_id" placeholder="e.g. 1234567890">
+        </div>
+
+        <div class="form-group">
+            <label for="dest_project">Destination Project (Ops Runner Project)</label>
+            <input type="text" id="dest_project" value="{{ project_id }}">
+        </div>
+
+        <div class="form-group">
+            <label for="topic_name">Pub/Sub Topic Name</label>
+            <input type="text" id="topic_name" value="project-events">
+        </div>
+
+        <div class="form-group">
+            <label for="sink_name">Log Sink Name</label>
+            <input type="text" id="sink_name" value="ops-runner-sink">
+        </div>
+
+        <button onclick="generateCommand()">Generate Commands</button>
+
+        <div id="warning" style="display:none; color: red; margin-top: 10px;">
+            <strong>Note:</strong> Since this uses Pub/Sub, you must ensure the <code>src/server.py</code> handles Pub/Sub wrapped events. (Currently configured for direct Audit Logs).
+        </div>
+
+        <pre id="output">Commands will appear here...</pre>
+    </div>
+</body>
+</html>

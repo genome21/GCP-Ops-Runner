@@ -222,6 +222,12 @@ def index():
     runbooks = get_runbooks()
     return render_template('index.html', runbooks=runbooks, project_id=PROJECT_ID, user=session.get('user'))
 
+@app.route('/setup', methods=['GET'])
+@login_required
+def setup_helper():
+    """Renders the Setup Helper UI."""
+    return render_template('setup_helper.html', project_id=PROJECT_ID, user=session.get('user'))
+
 @app.route('/rules', methods=['GET'])
 @login_required
 def rules_list():
@@ -248,6 +254,7 @@ def add_rule():
     if not db:
         return "Firestore not configured.", 500
 
+    rule_name = request.form.get('rule_name', 'Unnamed Rule')
     label_key = request.form.get('label_key')
     label_value = request.form.get('label_value')
     groups_str = request.form.get('target_groups') # Comma separated
@@ -259,6 +266,7 @@ def add_rule():
 
     try:
         db.collection('automation_rules').add({
+            'name': rule_name,
             'label_key': label_key,
             'label_value': label_value,
             'target_groups': target_groups
@@ -380,6 +388,7 @@ def handle_project_created_event():
 
         for rule_doc in rules:
             rule = rule_doc.to_dict()
+            rule_name = rule.get('name', rule_doc.id)
             label_key = rule.get('label_key')
             label_value = rule.get('label_value')
             target_groups = rule.get('target_groups', [])
@@ -393,7 +402,7 @@ def handle_project_created_event():
             project_label_value = labels.get(label_key)
 
             if project_label_value == label_value:
-                logger.info(f"Rule {rule_doc.id} matched for {label_key}={label_value}")
+                logger.info(f"Rule '{rule_name}' ({rule_doc.id}) matched for {label_key}={label_value}")
 
                 for group_tmpl in target_groups:
                     # Resolve Template
