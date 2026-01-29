@@ -13,6 +13,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from googleapiclient import discovery
 import google.auth
+from cloudevents.http import from_http
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', stream=sys.stdout)
@@ -47,8 +48,10 @@ QUEUE_NAME = os.environ.get("QUEUE_NAME", "ops-queue")
 SERVICE_URL = os.environ.get("SERVICE_URL")
 # The service account to use for the OIDC token when the task invokes the worker
 SERVICE_ACCOUNT_EMAIL = os.environ.get("SERVICE_ACCOUNT_EMAIL")
+# Identity Domain for custom groups
+DOMAIN = os.environ.get("DOMAIN", "example.com")
 
-logger.info(f"Server starting with Config: PROJECT_ID={PROJECT_ID}, REGION={REGION}, QUEUE_NAME={QUEUE_NAME}, SERVICE_ACCOUNT_EMAIL={SERVICE_ACCOUNT_EMAIL}")
+logger.info(f"Server starting with Config: PROJECT_ID={PROJECT_ID}, REGION={REGION}, QUEUE_NAME={QUEUE_NAME}, SERVICE_ACCOUNT_EMAIL={SERVICE_ACCOUNT_EMAIL}, DOMAIN={DOMAIN}")
 
 def check_user_access(email):
     """
@@ -87,27 +90,61 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-def verify_oidc_token():
+def verify_oidc_token(audience_override=None):
     """Verifies the Bearer token in the Authorization header."""
     auth_header = request.headers.get('Authorization')
     if not auth_header:
-        logger.warning("Missing Authorization header in /execute request")
+        logger.warning("Missing Authorization header in request")
         return False
 
     try:
         token = auth_header.split(" ")[1]
 
-        # The audience must match the target URL (e.g., https://service-url/execute)
-        # Cloud Tasks sends the token with audience = target_url
-        expected_audience = f"{SERVICE_URL}/execute"
+        # Determine expected audience
+        # Cloud Tasks sends audience = target_url (e.g., .../execute)
+        # EventArc sends audience = service_url (root)
+
         if not SERVICE_URL:
-            logger.error("SERVICE_URL not set, cannot verify audience")
+             logger.error("SERVICE_URL not set, cannot verify audience")
+             return False
+
+        if audience_override:
+            allowed_audiences = [audience_override]
+        else:
+            # Allow both specific endpoint (Cloud Tasks) and root service (EventArc)
+            allowed_audiences = [f"{SERVICE_URL}/execute", SERVICE_URL]
+
+        # verify_oauth2_token doesn't support a list of audiences directly,
+        # so we decode without audience verification first, check aud, then verify.
+        # OR just try/except with each audience.
+
+        # Simpler approach: Verify signature first, then check audience manually
+        # But google library requires audience for verify_oauth2_token to be secure.
+
+        # We will try verifying against the primary expected audience for the route
+        # For this function, we default to the request.url or let caller specify.
+
+        # Improved Strategy: The caller knows what endpoint they are protecting.
+        # But we reused this function.
+        # Let's iterate.
+
+        verified_token = None
+        last_error = None
+
+        for aud in allowed_audiences:
+            try:
+                verified_token = id_token.verify_oauth2_token(token, google_requests.Request(), audience=aud)
+                break
+            except Exception as e:
+                last_error = e
+
+        if verified_token:
+            logger.info(f"Verified OIDC token for {verified_token.get('email')} with audience {verified_token.get('aud')}")
+            return True
+        else:
+            logger.error(f"Token verification failed for all allowed audiences: {allowed_audiences}. Last error: {last_error}")
             return False
 
-        id_info = id_token.verify_oauth2_token(token, google_requests.Request(), audience=expected_audience)
-
-        logger.info(f"Verified OIDC token for {id_info.get('email')} with audience {id_info.get('aud')}")
-        return True
     except Exception as e:
         logger.error(f"Token verification failed: {e}")
         return False
@@ -191,43 +228,18 @@ def index():
     runbooks = get_runbooks()
     return render_template('index.html', runbooks=runbooks, project_id=PROJECT_ID, user=session.get('user'))
 
-@app.route('/enqueue', methods=['POST'])
-@login_required
-def enqueue_task():
-    """Enqueues a task to Cloud Tasks."""
-    data = request.form.to_dict()
-    action = data.get('action')
-
-    if not action:
-        return "Missing action", 400
-
-    # Validate Configuration
-    if PROJECT_ID == "unknown-project":
-        logger.error("PROJECT_ID environment variable is missing.")
-        return "Configuration Error: PROJECT_ID not set on server.", 500
-
-    # Clean up form data to be just the params for the payload
-    payload = data.copy()
-
-    # Ensure PROJECT_ID is passed if not in form (though form usually overrides)
-    # The UI should map the user input to the variable names
-
-    # Construct Cloud Task
+def create_task(action, payload):
+    """Helper to create cloud task"""
     client = tasks_v2.CloudTasksClient()
     logger.info(f"Enqueuing task to: projects/{PROJECT_ID}/locations/{REGION}/queues/{QUEUE_NAME}")
     parent = client.queue_path(PROJECT_ID, REGION, QUEUE_NAME)
 
-    # If SERVICE_URL is not set, we can't properly target ourselves
     target_url = SERVICE_URL
     if not target_url:
-        # Fallback for local testing or misconfig
-        logger.warning("SERVICE_URL env var not set. Task might fail if not fully configured.")
+        logger.warning("SERVICE_URL env var not set.")
         target_url = "http://localhost:8080/execute" # Placeholder
 
-    # The worker expects a JSON payload with 'action' and 'project_id' (legacy)
-    # and any other params as environment variables?
-    # Actually, the original worker logic put 'project_id' into env.
-    # We should update the worker logic to put ALL payload keys into env.
+    # Payload already has action and other params
 
     task = {
         "http_request": {
@@ -243,13 +255,104 @@ def enqueue_task():
              "service_account_email": SERVICE_ACCOUNT_EMAIL
          }
 
+    return client.create_task(request={"parent": parent, "task": task})
+
+
+@app.route('/enqueue', methods=['POST'])
+@login_required
+def enqueue_task():
+    """Enqueues a task to Cloud Tasks."""
+    data = request.form.to_dict()
+    action = data.get('action')
+
+    if not action:
+        return "Missing action", 400
+
+    if PROJECT_ID == "unknown-project":
+        logger.error("PROJECT_ID environment variable is missing.")
+        return "Configuration Error: PROJECT_ID not set on server.", 500
+
+    payload = data.copy()
+
     try:
-        response = client.create_task(request={"parent": parent, "task": task})
+        response = create_task(action, payload)
         logger.info(f"Created task {response.name}")
         return render_template('success.html', task_name=response.name)
     except Exception as e:
         logger.exception("Failed to create task")
         return f"Error creating task: {e}", 500
+
+@app.route('/events/project-created', methods=['POST'])
+def handle_project_created_event():
+    """Handles EventArc trigger for Project Created event."""
+    # Verify OIDC token from EventArc (which typically uses the Trigger SA)
+    if not verify_oidc_token():
+        return "Unauthorized", 401
+
+    try:
+        event = from_http(request.headers, request.get_data())
+        data = event.data
+
+        # Log the full event for debugging
+        # logger.info(f"Received Event: {data}")
+
+        # Check if it is a Project Create Audit Log
+        # The structure depends on the Audit Log version.
+        # Typically: protoPayload.methodName = "CreateProject"
+        # resourceName = "projects/12345"
+
+        method_name = data.get("protoPayload", {}).get("methodName")
+        if method_name != "CreateProject":
+             logger.info(f"Ignored event method: {method_name}")
+             return "Ignored", 200
+
+        resource_name = data.get("protoPayload", {}).get("resourceName")
+        # Format: projects/PROJECT_ID (sometimes number, sometimes ID)
+        # Actually CreateProject response typically has the Project Object.
+        # Wait, CreateProject request might not have the ID if it's async?
+        # Let's rely on resourceName or response.
+
+        # Better: use the 'resource' field from the audit log
+        # resource.type="project", resource.labels.project_id
+
+        target_project_id = data.get("resource", {}).get("labels", {}).get("project_id")
+
+        if not target_project_id:
+             logger.error("Could not determine project_id from event")
+             return "Error: No Project ID", 400
+
+        logger.info(f"New Project Detected: {target_project_id}")
+
+        # Check Labels
+        credentials, _ = google.auth.default()
+        service = discovery.build('cloudresourcemanager', 'v3', credentials=credentials)
+        project = service.projects().get(name=f"projects/{target_project_id}").execute()
+
+        labels = project.get("labels", {})
+        # Check if ANY label has value "gcp-adv" OR key "gcp-adv"
+        is_match = False
+        for k, v in labels.items():
+            if k == "gcp-adv" or v == "gcp-adv":
+                is_match = True
+                break
+
+        if is_match:
+            logger.info(f"Project {target_project_id} matches label criteria. Triggering sync.")
+            # Trigger Task
+            payload = {
+                "action": "sync_custom_groups",
+                "project_id": target_project_id,
+                "domain": DOMAIN
+            }
+            create_task("sync_custom_groups", payload)
+            return "Triggered", 200
+        else:
+            logger.info(f"Project {target_project_id} does not match label criteria.")
+            return "Skipped", 200
+
+    except Exception as e:
+        logger.exception(f"Error processing event: {e}")
+        return "Error", 500
 
 @app.route('/execute', methods=['POST'])
 def execute_runbook():

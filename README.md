@@ -39,6 +39,7 @@ A serverless execution framework for Google Cloud operational runbooks. Features
     export REGION=us-central1
     export GOOGLE_CLIENT_ID="your-client-id"
     export GOOGLE_CLIENT_SECRET="your-client-secret"
+    export DOMAIN="example.com" # Your Identity Domain for group sync
 
     ./deploy/setup_infra.sh
     ```
@@ -51,6 +52,7 @@ A serverless execution framework for Google Cloud operational runbooks. Features
     *   Grant **Project IAM Admin**, **Cloud Run Invoker**, and **Cloud Tasks Enqueuer** roles.
     *   Create a Cloud Tasks queue (`ops-queue`).
     *   Deploy the Cloud Run service (`ops-runner`) with **public access** enabled (authentication is enforced by the application).
+    *   Create an **EventArc Trigger** to listen for Project Creation events and automatically sync groups if applicable.
 
     > **⚠️ Security Warning:** The `setup_infra.sh` script grants `roles/resourcemanager.projectIamAdmin` to the Runner Service Account. This is a high-privilege role designed to allow the runner to fix IAM permissions. For a production environment, you should restrict this Service Account's permissions to the minimum required for your specific runbooks.
 
@@ -104,6 +106,18 @@ See the [Runbook Development Guide](RUNBOOK_GUIDE.md) for detailed instructions 
     ```bash
     gcloud run deploy ops-runner --source . --platform managed --region ${REGION:-us-central1} --quiet
     ```
+
+## Event-Driven Automation
+
+The framework supports reacting to GCP events via EventArc.
+
+### Use Case: Sync Custom Groups
+When a new Project is created, the system checks if it has the label `gcp-adv`. If so, it attempts to add a specific Cloud Identity group (`[PROJECT_ID]-application-team@[DOMAIN]`) to the project with `roles/viewer`.
+
+1.  **Trigger:** `google.cloud.resourcemanager.project.v1.create` (via Cloud Audit Logs).
+2.  **Filter:** Checks for `gcp-adv` label on the project.
+3.  **Action:** Enqueues the `sync_custom_groups` runbook.
+4.  **Retry:** If the group does not exist yet (e.g., syncing from Azure AD), the runbook exits with error, causing Cloud Tasks to retry until success (or timeout).
 
 ## Logging
 
