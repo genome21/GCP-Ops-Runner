@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GCP Ops Automation - Rules Engine</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1 { color: #4285F4; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { padding: 12px; border-bottom: 1px solid #ddd; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .form-container { background: #f9f9f9; padding: 20px; margin-top: 30px; border-radius: 5px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input[type="text"] { width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        button { background-color: #34A853; color: white; padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; }
+        button.delete { background-color: #EA4335; padding: 5px 10px; font-size: 0.9em; }
+        a.nav-link { display: inline-block; margin-bottom: 20px; color: #4285F4; text-decoration: none; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="nav-link">&larr; Back to Portal</a>
+        <h1>Automation Rules Engine</h1>
+        <p>Define rules to automatically trigger runbooks based on Project Creation events and Labels.</p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Label Key</th>
+                    <th>Label Value</th>
+                    <th>Target Groups (Template)</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if rules %}
+                    {% for rule in rules %}
+                    <tr>
+                        <td>{{ rule.label_key }}</td>
+                        <td>{{ rule.label_value }}</td>
+                        <td>
+                            {% for group in rule.target_groups %}
+                                <div>{{ group }}</div>
+                            {% endfor %}
+                        </td>
+                        <td>
+                            <form action="/rules/delete" method="POST" onsubmit="return confirm('Are you sure?');">
+                                <input type="hidden" name="rule_id" value="{{ rule.id }}">
+                                <button type="submit" class="delete">Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr><td colspan="4">No rules defined.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        <div class="form-container">
+            <h3>Add New Rule</h3>
+            <form action="/rules/add" method="POST">
+                <label for="label_key">Label Key</label>
+                <input type="text" id="label_key" name="label_key" placeholder="e.g. type" required>
+
+                <label for="label_value">Label Value</label>
+                <input type="text" id="label_value" name="label_value" placeholder="e.g. gcp-adv" required>
+
+                <label for="target_groups">Target Groups Template (Comma Separated)</label>
+                <input type="text" id="target_groups" name="target_groups" placeholder="e.g. {project_id}-admins@{domain}, security-audit@{domain}" required>
+                <p style="font-size: 0.8em; color: #666;">Available variables: <code>{project_id}</code>, <code>{domain}</code></p>
+
+                <button type="submit">Add Rule</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
