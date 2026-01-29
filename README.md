@@ -119,6 +119,7 @@ The framework includes a **Rules Engine** (backed by Firestore) that allows you 
 2.  **Evaluation:** The system checks the new project's labels against the rules defined in Firestore.
 3.  **Action:** If a rule matches (e.g., Label Key `type` == `gcp-adv`), the system iterates through the configured **Target Group Templates**.
     *   Example Template: `{project_id}-admins@{domain}`
+    *   **Available Variables:** `{project_id}`, `{domain}`
     *   The system resolves the template variables and triggers the `add_group_to_project` runbook for each group.
 4.  **Retry:** If the group does not exist yet (e.g., syncing from Azure AD), the runbook exits with error, causing Cloud Tasks to retry until success.
 
