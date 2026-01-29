@@ -127,6 +127,9 @@ The framework includes a **Rules Engine** (backed by Firestore) that allows you 
 **Managing Rules:**
 Access the "Rules Engine" from the Ops Portal navigation bar to Add/Delete rules dynamically without changing code.
 
+**Event Setup (Org/Folder Level):**
+If you want to trigger automation for projects created anywhere in your Organization or Folder (not just the runner project), use the **Setup Helper** in the Ops Portal to generate the necessary Log Sink and Pub/Sub commands.
+
 ## Logging
 
 The runner is configured to stream logs to Cloud Logging.
