@@ -30,7 +30,8 @@ A serverless execution framework for Google Cloud operational runbooks. Features
     3.  Application Type: **Web application**.
     4.  Name: `Ops Portal`.
     5.  **Authorized Redirect URIs:** You will need to add the Cloud Run Service URL + `/auth` after deployment (e.g., `https://ops-runner-xyz.a.run.app/auth`). For now, you can leave it blank or put a placeholder.
-    6.  Copy the **Client ID** and **Client Secret**.
+    6.  **User Type:** Choose **Internal** if you want to restrict access to users within your Google Workspace organization. Choose **External** (and set to 'Testing') if you need to allow specific external users (requires adding them as Test Users).
+    7.  Copy the **Client ID** and **Client Secret**.
 
 3.  **Deploy Infrastructure:**
     Export your credentials and region, then run the setup script.
@@ -140,3 +141,10 @@ The runner is configured to stream logs to Cloud Logging.
     *   **Authorization:** The application enforces authorization by checking if the signed-in user has the `roles/iap.httpsResourceAccessor` role on the project. This mimics IAP behavior at the application level.
     *   **Task Execution:** Protected by OIDC Token Verification. The worker endpoint `/execute` validates that the request comes from a trusted Service Account via Cloud Tasks.
 *   **Least Privilege:** The Runner Service Account should only have the permissions necessary for the runbooks. The default setup grants `Project IAM Admin` for demonstration purposes; audit and scope this down for your needs.
+
+## Troubleshooting
+
+### Google Sign-In "Access Blocked"
+If you see an error saying "Access blocked: [App Name] can only be used within its organization":
+*   This means your OAuth Consent Screen is set to **Internal**, but you are trying to sign in with an account *outside* the Google Workspace organization that owns the project.
+*   **Solution:** Sign in with an account from the same organization, or change the User Type to **External** (and add your email as a Test User) in the Google Cloud Console.
